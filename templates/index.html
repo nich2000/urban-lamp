@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Urban Lamp</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/app.css">
+  <script defer src="/static/app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>Urban Lamp</h1>
+      <p>Мониторинг доступности сервисов</p>
+    </div>
+    <div class="summary">
+      <span id="service-count">{{len .Services}}</span>
+      <small id="service-word">{{serviceWord (len .Services)}}</small>
+    </div>
+  </header>
+
+  <main>
+    <section class="panel controls">
+      <form action="/services" method="post" class="service-form">
+        <label>
+          Цель
+          <input name="target" required placeholder="https://example.com или 1.1.1.1">
+        </label>
+        <label>
+          Метод
+          <select name="method" required>
+            {{range .Methods}}
+            <option value="{{.}}">{{.}}</option>
+            {{end}}
+          </select>
+        </label>
+        <button type="submit">Добавить</button>
+      </form>
+    </section>
+
+    <section id="services" class="service-grid" data-threshold="{{.LongPingThreshold}}">
+      {{range .Services}}
+      <article class="service-card" data-service-id="{{.Service.ID}}">
+        <div class="card-head">
+          <div>
+            <h2>{{.Service.Target}}</h2>
+            <p>{{.Service.Method}}</p>
+          </div>
+          <div class="card-actions">
+            <button class="ghost edit-toggle" type="button" aria-expanded="false">Изменить</button>
+            <form action="/services/{{.Service.ID}}/delete" method="post">
+              <button class="ghost danger" type="submit" aria-label="Удалить {{.Service.Target}}">Удалить</button>
+            </form>
+          </div>
+        </div>
+        <form action="/services/{{.Service.ID}}/update" method="post" class="edit-form" hidden>
+          <label>
+            Цель
+            <input name="target" required value="{{.Service.Target}}">
+          </label>
+          <label>
+            Метод
+            <select name="method" required>
+              <option value="http" {{if eq .Service.Method "http"}}selected{{end}}>http</option>
+              <option value="icmp" {{if eq .Service.Method "icmp"}}selected{{end}}>icmp</option>
+            </select>
+          </label>
+          <button type="submit">Сохранить</button>
+        </form>
+        <div class="metric-row">
+          <span class="status {{statusClass .Latest}}">
+            {{statusMessage .Latest}}
+          </span>
+          <div class="timing">
+            <strong class="duration">
+              {{if .Latest}}{{if .Latest.DurationMS}}{{.Latest.DurationMS}} мс{{else}}—{{end}}{{else}}—{{end}}
+            </strong>
+            <time>{{if .Latest}}{{formatTime .Latest.CheckedAt}}{{else}}—{{end}}</time>
+          </div>
+        </div>
+        <canvas height="130" aria-label="График продолжительности пинга"></canvas>
+        <p class="last-error">{{if .Latest}}{{.Latest.Error}}{{end}}</p>
+      </article>
+      {{else}}
+      <div class="empty">Добавьте первый сервис для мониторинга.</div>
+      {{end}}
+    </section>
+  </main>
+</body>
+</html>
