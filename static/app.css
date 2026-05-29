@@ -83,6 +83,21 @@ main {
   margin-bottom: 18px;
 }
 
+.app-error {
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border: 1px solid #f2c98b;
+  border-radius: 8px;
+  background: #fff7e8;
+  color: #7b4a00;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.app-error[hidden] {
+  display: none;
+}
+
 .service-form {
   display: grid;
   grid-template-columns: 1fr 120px auto;
@@ -101,6 +116,7 @@ label {
 input,
 select,
 button {
+  height: 42px;
   min-height: 42px;
   border-radius: 7px;
   font: inherit;
@@ -113,6 +129,7 @@ select {
   padding: 0 10px;
   background: #fff;
   color: var(--text);
+  line-height: 42px;
 }
 
 button {
@@ -126,6 +143,11 @@ button {
 
 button:hover {
   filter: brightness(0.95);
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .ghost {

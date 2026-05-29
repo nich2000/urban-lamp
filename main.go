@@ -29,6 +29,7 @@ const (
 	requestTimeout    = 3 * time.Second
 	longPingThreshold = 800
 	maxHistoryPoints  = 60
+	maxServices       = 20
 )
 
 type Service struct {
@@ -49,6 +50,7 @@ type PingResult struct {
 type ServiceSnapshot struct {
 	Service Service      `json:"service"`
 	Latest  *PingResult  `json:"latest"`
+	LastOK  *PingResult  `json:"lastOk"`
 	History []PingResult `json:"history"`
 }
 
@@ -56,6 +58,8 @@ type PageData struct {
 	Services          []ServiceSnapshot
 	Methods           []string
 	LongPingThreshold int
+	MaxServices       int
+	Error             string
 }
 
 type App struct {
@@ -72,7 +76,7 @@ type Store struct {
 
 func main() {
 	dbPath := getenv("URBAN_LAMP_DB", defaultDBPath)
-	addr := getenv("URBAN_LAMP_ADDR", defaultAddr)
+	addr := listenAddr()
 
 	store := NewStore(dbPath)
 	app, err := NewApp(store)
@@ -104,10 +108,11 @@ func NewApp(store *Store) (*App, error) {
 	}
 
 	tmpl, err := template.New("index.html").Funcs(template.FuncMap{
-		"formatTime":    formatTime,
-		"serviceWord":   serviceWord,
-		"statusClass":   statusClass,
-		"statusMessage": statusMessage,
+		"formatResultTime": formatResultTime,
+		"formatTime":       formatTime,
+		"serviceWord":      serviceWord,
+		"statusClass":      statusClass,
+		"statusMessage":    statusMessage,
 	}).ParseFS(assets, "templates/index.html")
 	if err != nil {
 		return nil, err
@@ -177,6 +182,19 @@ func (s *Store) ListServices(ctx context.Context) ([]Service, error) {
 	var services []Service
 	err := s.query(ctx, `SELECT id, name, target, method FROM services ORDER BY id;`, &services)
 	return services, err
+}
+
+func (s *Store) CountServices(ctx context.Context) (int, error) {
+	var rows []struct {
+		Count int `json:"count"`
+	}
+	if err := s.query(ctx, `SELECT COUNT(*) AS count FROM services;`, &rows); err != nil {
+		return 0, err
+	}
+	if len(rows) == 0 {
+		return 0, nil
+	}
+	return rows[0].Count, nil
 }
 
 func (s *Store) CreateService(ctx context.Context, name, target, method string) error {
@@ -295,8 +313,8 @@ func (a *App) handleIndex(w http.ResponseWriter, r *http.Request) {
 
 	snapshots, err := a.snapshots(r.Context())
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		log.Printf("load snapshots: %v", err)
+		snapshots = nil
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -304,6 +322,8 @@ func (a *App) handleIndex(w http.ResponseWriter, r *http.Request) {
 		Services:          snapshots,
 		Methods:           []string{"http", "icmp"},
 		LongPingThreshold: longPingThreshold,
+		MaxServices:       maxServices,
+		Error:             firstNonEmpty(r.URL.Query().Get("error"), errorText(err)),
 	})
 	if err != nil {
 		log.Printf("render index: %v", err)
@@ -333,12 +353,23 @@ func (a *App) handleCreateService(w http.ResponseWriter, r *http.Request) {
 	method := strings.TrimSpace(r.FormValue("method"))
 	target := normalizeTarget(strings.TrimSpace(r.FormValue("target")), method)
 	if err := validateService(target, method); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		redirectWithError(w, r, err.Error())
+		return
+	}
+	count, err := a.store.CountServices(r.Context())
+	if err != nil {
+		log.Printf("count services: %v", err)
+		redirectWithError(w, r, "Не удалось проверить количество сервисов.")
+		return
+	}
+	if count >= maxServices {
+		redirectWithError(w, r, fmt.Sprintf("Можно добавить не больше %d сервисов.", maxServices))
 		return
 	}
 
 	if err := a.store.CreateService(r.Context(), target, target, method); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("create service: %v", err)
+		redirectWithError(w, r, "Не удалось добавить сервис.")
 		return
 	}
 
@@ -369,18 +400,20 @@ func (a *App) handleServiceAction(w http.ResponseWriter, r *http.Request) {
 	switch parts[1] {
 	case "delete":
 		if err := a.store.DeleteService(r.Context(), id); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			log.Printf("delete service: %v", err)
+			redirectWithError(w, r, "Не удалось удалить сервис.")
 			return
 		}
 	case "update":
 		method := strings.TrimSpace(r.FormValue("method"))
 		target := normalizeTarget(strings.TrimSpace(r.FormValue("target")), method)
 		if err := validateService(target, method); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			redirectWithError(w, r, err.Error())
 			return
 		}
 		if err := a.store.UpdateService(r.Context(), id, target, method); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			log.Printf("update service: %v", err)
+			redirectWithError(w, r, "Не удалось обновить сервис.")
 			return
 		}
 	default:
@@ -426,6 +459,13 @@ func formatTime(t time.Time) string {
 	return t.Local().Format("15:04:05")
 }
 
+func formatResultTime(result *PingResult) string {
+	if result == nil {
+		return "—"
+	}
+	return formatTime(result.CheckedAt)
+}
+
 func serviceWord(count int) string {
 	mod100 := count % 100
 	if mod100 >= 11 && mod100 <= 14 {
@@ -467,6 +507,26 @@ func statusMessage(result *PingResult) string {
 	}
 }
 
+func redirectWithError(w http.ResponseWriter, r *http.Request, message string) {
+	http.Redirect(w, r, "/?error="+url.QueryEscape(message), http.StatusSeeOther)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func errorText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return "Данные временно недоступны. Интерфейс продолжает работать."
+}
+
 func (a *App) handleEvents(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -496,6 +556,10 @@ func (a *App) handleEvents(w http.ResponseWriter, r *http.Request) {
 
 	if payload, err := a.snapshotPayload(r.Context()); err == nil {
 		fmt.Fprintf(w, "event: snapshot\ndata: %s\n\n", payload)
+		flusher.Flush()
+	} else {
+		log.Printf("initial SSE snapshot: %v", err)
+		fmt.Fprintf(w, "event: app-error\ndata: %q\n\n", "Данные временно недоступны.")
 		flusher.Flush()
 	}
 
@@ -640,6 +704,13 @@ func (a *App) snapshots(ctx context.Context) ([]ServiceSnapshot, error) {
 			latest := history[len(history)-1]
 			snapshot.Latest = &latest
 		}
+		for i := len(history) - 1; i >= 0; i-- {
+			if history[i].OK {
+				lastOK := history[i]
+				snapshot.LastOK = &lastOK
+				break
+			}
+		}
 		snapshots = append(snapshots, snapshot)
 	}
 	return snapshots, nil
@@ -697,6 +768,19 @@ func getenv(name, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func listenAddr() string {
+	if addr := strings.TrimSpace(os.Getenv("URBAN_LAMP_ADDR")); addr != "" {
+		return addr
+	}
+	if port := strings.TrimSpace(os.Getenv("PORT")); port != "" {
+		if strings.Contains(port, ":") {
+			return port
+		}
+		return ":" + port
+	}
+	return defaultAddr
 }
 
 func displayURL(addr string) string {

@@ -21,6 +21,7 @@
   </header>
 
   <main>
+    <div id="app-error" class="app-error" role="status" {{if not .Error}}hidden{{end}}>{{.Error}}</div>
     <section class="panel controls">
       <form action="/services" method="post" class="service-form">
         <label>
@@ -35,11 +36,11 @@
             {{end}}
           </select>
         </label>
-        <button type="submit">Добавить</button>
+        <button type="submit" {{if ge (len .Services) .MaxServices}}disabled{{end}}>Добавить</button>
       </form>
     </section>
 
-    <section id="services" class="service-grid" data-threshold="{{.LongPingThreshold}}">
+    <section id="services" class="service-grid" data-threshold="{{.LongPingThreshold}}" data-max-services="{{.MaxServices}}">
       {{range .Services}}
       <article class="service-card" data-service-id="{{.Service.ID}}">
         <div class="card-head">
@@ -76,7 +77,7 @@
             <strong class="duration">
               {{if .Latest}}{{if .Latest.DurationMS}}{{.Latest.DurationMS}} мс{{else}}—{{end}}{{else}}—{{end}}
             </strong>
-            <time>{{if .Latest}}{{formatTime .Latest.CheckedAt}}{{else}}—{{end}}</time>
+            <time>{{formatResultTime .LastOK}}</time>
           </div>
         </div>
         <canvas height="130" aria-label="График продолжительности пинга"></canvas>

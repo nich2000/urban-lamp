@@ -1,0 +1,14 @@
+services:
+  urban-lamp:
+    build: .
+    environment:
+      PORT: ${PORT:-8080}
+      URBAN_LAMP_DB: /data/urban-lamp.db
+    ports:
+      - "${URBAN_LAMP_PORT:-8080}:${PORT:-8080}"
+    volumes:
+      - urban-lamp-data:/data
+    restart: unless-stopped
+
+volumes:
+  urban-lamp-data:

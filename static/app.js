@@ -38,6 +38,13 @@ function serviceWord(count) {
   }
 }
 
+function showError(message) {
+  const banner = document.querySelector("#app-error");
+  if (!banner) return;
+  banner.textContent = message;
+  banner.hidden = !message;
+}
+
 function methodOptions(method) {
   return `
     <option value="http" ${method === "http" ? "selected" : ""}>http</option>
@@ -96,10 +103,13 @@ function ensureCard(snapshot) {
 function renderSnapshot(payload) {
   const grid = document.querySelector("#services");
   const threshold = payload.longPingThreshold || Number(grid.dataset.threshold || 800);
+  const maxServices = Number(grid.dataset.maxServices || 20);
   const seen = new Set();
 
   document.querySelector("#service-count").textContent = payload.services.length;
   document.querySelector("#service-word").textContent = serviceWord(payload.services.length);
+  const addButton = document.querySelector(".service-form button[type='submit']");
+  if (addButton) addButton.disabled = payload.services.length >= maxServices;
   grid.querySelector(".empty")?.remove();
 
   for (const snapshot of payload.services) {
@@ -110,14 +120,18 @@ function renderSnapshot(payload) {
 
     card.querySelector("h2").textContent = snapshot.service.target;
     card.querySelector(".card-head p").textContent = snapshot.service.method;
+    const editForm = card.querySelector(".edit-form");
+    const editing = !editForm.hidden || editForm.matches(":focus-within");
     card.querySelector(".card-actions form").action = `/services/${snapshot.service.id}/delete`;
-    card.querySelector(".edit-form").action = `/services/${snapshot.service.id}/update`;
-    card.querySelector(".edit-form input[name='target']").value = snapshot.service.target;
-    card.querySelector(".edit-form select[name='method']").innerHTML = methodOptions(snapshot.service.method);
+    editForm.action = `/services/${snapshot.service.id}/update`;
+    if (!editing) {
+      editForm.querySelector("input[name='target']").value = snapshot.service.target;
+      editForm.querySelector("select[name='method']").innerHTML = methodOptions(snapshot.service.method);
+    }
     card.querySelector(".status").className = status.className;
     card.querySelector(".status").textContent = status.text;
     card.querySelector(".duration").textContent = durationText(latest);
-    card.querySelector(".timing time").textContent = checkedAtText(latest);
+    card.querySelector(".timing time").textContent = checkedAtText(snapshot.lastOk);
     card.querySelector(".last-error").textContent = latest?.error || "";
     drawChart(card.querySelector("canvas"), snapshot.history, threshold);
   }
@@ -219,5 +233,19 @@ document.addEventListener("click", (event) => {
 
 const events = new EventSource("/events");
 events.addEventListener("snapshot", (event) => {
-  renderSnapshot(JSON.parse(event.data));
+  try {
+    renderSnapshot(JSON.parse(event.data));
+  } catch (error) {
+    showError("Не удалось обновить данные на странице.");
+  }
+});
+events.addEventListener("app-error", (event) => {
+  try {
+    showError(JSON.parse(event.data));
+  } catch (error) {
+    showError("Данные временно недоступны.");
+  }
+});
+events.addEventListener("error", () => {
+  showError("Соединение с сервером временно недоступно.");
 });

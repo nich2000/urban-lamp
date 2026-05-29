@@ -1,0 +1,7 @@
+.cache/
+.git/
+*.db
+*.db-shm
+*.db-wal
+coverage.out
+urban-lamp
